@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  :root {
+    --text: #21262E;
+    --muted: #5F6A7C;
+    --border: #EFF2F6;
+    --font-size: 16px;
+    --line-height: 1.62;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+  }
+  body {
+    color: var(--text);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: var(--font-size);
+    line-height: var(--line-height);
+    -webkit-text-size-adjust: 100%;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    overflow-x: hidden;
+  }
+  #content > *:first-child { margin-top: 0; }
+  #content > *:last-child { margin-bottom: 0; }
+  p { margin: 0 0 10px; }
+  strong, b { font-weight: 700; }
+  img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 10px 0;
+    border-radius: 6px;
+    /* Diagrams are drawn in black on a transparent background, so they keep a light
+       backdrop in both themes instead of disappearing into a dark page. */
+    background: #FFFFFF;
+    padding: 4px;
+    box-sizing: border-box;
+  }
+  table {
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 0.95em;
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  td, th {
+    border: 1px solid var(--border);
+    padding: 6px 9px;
+    text-align: left;
+    vertical-align: top;
+  }
+  mjx-container { max-width: 100%; }
+  mjx-container[display="true"] {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 2px 0;
+  }
+  .content-placeholder {
+    display: inline-block;
+    padding: 8px 12px;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-family: system-ui, sans-serif;
+    font-size: 13px;
+  }
+</style>
+<script>
+  (function () {
+    var contentEl = null;
+    var lastReportedHeight = -1;
+    var pendingTypeset = false;
+    var typesetChain = Promise.resolve();
+    var renderGeneration = 0;
+    var reportScheduled = false;
+
+    function el() {
+      if (!contentEl) contentEl = document.getElementById('content');
+      return contentEl;
+    }
+
+    function reportHeight() {
+      reportScheduled = false;
+      var node = el();
+      if (!node) return;
+      var height = Math.ceil(node.getBoundingClientRect().height);
+      if (height !== lastReportedHeight) {
+        lastReportedHeight = height;
+        if (window.AndroidBridge && window.AndroidBridge.onHeightChanged) {
+          window.AndroidBridge.onHeightChanged(height);
+        }
+      }
+    }
+
+    function scheduleReport() {
+      if (reportScheduled) return;
+      reportScheduled = true;
+      window.requestAnimationFrame(reportHeight);
+    }
+    window.scheduleReport = scheduleReport;
+
+    /** Remote images can be slow or simply gone; neither should leave a broken icon behind. */
+    function attachImageHandlers(root) {
+      var images = root.getElementsByTagName('img');
+      for (var i = 0; i < images.length; i++) {
+        (function (img) {
+          img.addEventListener('load', scheduleReport);
+          img.addEventListener('error', function () {
+            var fallback = document.createElement('span');
+            fallback.className = 'content-placeholder';
+            fallback.textContent = 'Image unavailable';
+            if (img.parentNode) img.parentNode.replaceChild(fallback, img);
+            scheduleReport();
+          });
+        })(images[i]);
+      }
+    }
+
+    function typeset() {
+      var node = el();
+      if (!node) return;
+      if (!window.__mathJaxReady || !window.MathJax || !window.MathJax.typesetPromise) {
+        pendingTypeset = true;
+        scheduleReport();
+        return;
+      }
+      pendingTypeset = false;
+      var generation = renderGeneration;
+      typesetChain = typesetChain.then(function () {
+        if (generation !== renderGeneration) return;
+        return window.MathJax.typesetPromise([node]);
+      }).catch(function () {
+        // Unexpected markup must never blank the screen: the text stays as-is.
+      }).then(function () {
+        if (generation !== renderGeneration) return;
+        fitWideContent(node);
+        node.style.visibility = '';
+        scheduleReport();
+      });
+    }
+
+    function fitWideContent(node) {
+      var available = node.clientWidth;
+      if (!available) return;
+      var items = node.querySelectorAll('table, mjx-container');
+      for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        if (item.tagName !== 'TABLE' && item.closest('table')) continue;
+        item.style.zoom = '';
+        var width = Math.max(item.scrollWidth, item.getBoundingClientRect().width);
+        if (width > available + 1) item.style.zoom = String(available / width);
+      }
+    }
+
+    function clearTypeset(node) {
+      if (!window.__mathJaxReady || !window.MathJax || !window.MathJax.typesetClear) return;
+      try {
+        window.MathJax.typesetClear([node]);
+      } catch (e) {
+      }
+    }
+
+    window.flushPending = function () {
+      if (pendingTypeset) typeset();
+      else scheduleReport();
+    };
+
+    window.applyTheme = function (theme) {
+      if (!theme) return;
+      var root = document.documentElement.style;
+      if (theme.text) root.setProperty('--text', theme.text);
+      if (theme.muted) root.setProperty('--muted', theme.muted);
+      if (theme.border) root.setProperty('--border', theme.border);
+      if (theme.fontSize) root.setProperty('--font-size', theme.fontSize);
+      if (theme.lineHeight) root.setProperty('--line-height', theme.lineHeight);
+      scheduleReport();
+    };
+
+    window.renderContent = function (html, theme) {
+      var node = el();
+      if (!node) return;
+      if (theme) window.applyTheme(theme);
+      renderGeneration++;
+      clearTypeset(node);
+      lastReportedHeight = -1;
+      if (window.__mathJaxReady) node.style.visibility = 'hidden';
+      try {
+        node.innerHTML = html;
+      } catch (e) {
+        node.textContent = html;
+      }
+      attachImageHandlers(node);
+      typeset();
+      scheduleReport();
+    };
+
+    document.addEventListener('DOMContentLoaded', function () {
+      if (window.ResizeObserver) {
+        new window.ResizeObserver(scheduleReport).observe(el());
+      }
+      window.addEventListener('resize', function () {
+        fitWideContent(el());
+        scheduleReport();
+      });
+      scheduleReport();
+    });
+  })();
+
+  window.MathJax = {
+    tex: {
+      inlineMath: [['$', '$'], ['\\(', '\\)']],
+      displayMath: [['$$', '$$'], ['\\[', '\\]']],
+      processEscapes: true,
+      processEnvironments: true
+    },
+    options: {
+      enableMenu: false,
+      skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    },
+    svg: { fontCache: 'local' },
+    startup: {
+      typeset: false,
+      pageReady: function () {
+        window.__mathJaxReady = true;
+        window.flushPending();
+      }
+    }
+  };
+</script>
+<script src="/assets/mathjax/tex-mml-svg.js"></script>
+</head>
+<body>
+  <div id="content"></div>
+</body>
+</html>

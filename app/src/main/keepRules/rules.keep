@@ -1,0 +1,18 @@
+# Add project specific R8 rules here.
+# AGP will combine all keep rule files in src/main/keepRules to pass to R8
+#
+# For more details, see
+#   https://d.android.com/r/tools/r8/keep-rules
+
+# The data models are only referenced through kotlinx.serialization's generated serializers.
+-keepclassmembers class com.example.mathongoassignment.data.dto.** {
+    *** Companion;
+}
+-keepclasseswithmembers class com.example.mathongoassignment.data.dto.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+
+# The content page calls back into this interface by name from JavaScript.
+-keepclassmembers class com.example.mathongoassignment.ui.richtext.ContentWebViewHolder$Bridge {
+    @android.webkit.JavascriptInterface <methods>;
+}
